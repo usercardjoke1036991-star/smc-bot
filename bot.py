@@ -1,4 +1,4 @@
-"""SMC OMEGA: escáner autónomo, sin lookahead, para Bybit y Telegram.
+"""SMC OMEGA: escáner autónomo, sin lookahead, para Kraken y Telegram.
 
 El proceso reconstruye todo el estado desde OHLCV público en cada ejecución.
 No coloca órdenes: publica señales con entrada, invalidación, objetivos y tamaño
@@ -122,7 +122,7 @@ def auto_scale(timeframe: str) -> float:
 
 @dataclass(frozen=True)
 class Config:
-    exchange_id: str = "bybit"
+    exchange_id: str = "kraken"
     symbols: tuple[str, ...] = ("BTC/USDT",)
     timeframe: str = "15m"
     bars: int = 1500
@@ -231,7 +231,7 @@ class Config:
             if item.strip()
         )
         cfg = cls(
-            exchange_id=os.getenv("EXCHANGE_ID", "bybit").strip().lower(),
+            exchange_id=os.getenv("EXCHANGE_ID", "kraken").strip().lower(),
             symbols=symbols,
             timeframe=os.getenv("TIMEFRAME", "15m").strip(),
             bars=env_int("HISTORY_BARS", 1500, 500),
