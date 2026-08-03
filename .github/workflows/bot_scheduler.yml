@@ -1,4 +1,4 @@
-name: Bot SMC Automático
+name: Ejecutar Bot SMC Automático
 
 on:
   schedule:
@@ -18,11 +18,22 @@ jobs:
           python-version: '3.11'
 
       - name: Instalar Dependencias
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Instalar Librerías
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Ejecutar Bot de Trading
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python bot.py
           
