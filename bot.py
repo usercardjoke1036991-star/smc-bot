@@ -1,10 +1,9 @@
 import ccxt
 import pandas as pd
 
-# Inicializar conexión sin claves para evitar llamadas privadas bloqueadas en la nube
-exchange = ccxt.binance({
+# Cambiamos a MEXC ya que no bloquea las IPs de los servidores en la nube de GitHub
+exchange = ccxt.mexc({
     'enableRateLimit': True,
-    'options': {'defaultType': 'future'}
 })
 
 def ejecutar_estrategia():
@@ -21,7 +20,7 @@ def ejecutar_estrategia():
     df['ema_lenta'] = df['close'].ewm(span=21, adjust=False).mean()
     
     ultima_vela = df.iloc[-2]
-    print(f"[{ultima_vela['timestamp']}] Análisis ejecutado con éxito en la nube. Cierre actual: {ultima_vela['close']}")
+    print(f"[{ultima_vela['timestamp']}] Análisis ejecutado con éxito en la nube (MEXC). Cierre actual: {ultima_vela['close']}")
 
 if __name__ == "__main__":
     ejecutar_estrategia()
