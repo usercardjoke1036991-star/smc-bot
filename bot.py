@@ -1,15 +1,11 @@
-from google.colab import userdata
+import os
 import ccxt
 import pandas as pd
 import requests
 
-# Configuración de Telegram utilizando los Secretos de Google Colab
-try:
-  TOKEN = userdata.get('TELEGRAM_TOKEN')
-  CHAT_ID = userdata.get('TELEGRAM_CHAT_ID')
-except Exception:
-  TOKEN = None
-  CHAT_ID = None
+# Configuración de Telegram utilizando variables de entorno del sistema
+TOKEN = os.environ.get('TELEGRAM_TOKEN')
+CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 # Cambiamos a MEXC ya que no bloquea las IPs de los servidores en la nube de GitHub
 exchange = ccxt.mexc({
@@ -20,7 +16,10 @@ exchange = ccxt.mexc({
 def enviar_alerta_telegram(mensaje):
   """Envía la notificación push directamente a tu Telegram."""
   if not TOKEN or not CHAT_ID:
-    print('⚠️ Credenciales de Telegram no encontradas en los Secretos de Colab.')
+    print(
+        '⚠️ Credenciales de Telegram no encontradas en las variables de'
+        ' entorno.'
+    )
     return
 
   url = f'https://api.telegram.org/bot{TOKEN}/sendMessage'
@@ -72,4 +71,4 @@ def ejecutar_estrategia():
 
 if __name__ == '__main__':
   ejecutar_estrategia()
-    
+  
