@@ -2,7 +2,8 @@ name: Ejecutar Bot SMC Automático
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    # Se ejecutará automáticamente cada 10 minutos
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:
