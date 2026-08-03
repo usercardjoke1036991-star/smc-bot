@@ -1,40 +1,57 @@
-name: Ejecutar Bot SMC Automático
+name: SMC OMEGA Telegram Bot
 
 on:
   schedule:
-    # Se ejecutará automáticamente cada 10 minutos
-    - cron: '*/10 * * * *'
+    - cron: "2,17,32,47 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: smc-omega-production
+  cancel-in-progress: false
+
 jobs:
-  run-bot:
+  scan:
+    name: Escanear mercados
     runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PYTHONUNBUFFERED: "1"
+      EXCHANGE_ID: binance
+      SYMBOLS: ${{ vars.SMC_SYMBOLS || 'BTC/USDT' }}
+      TIMEFRAME: ${{ vars.SMC_TIMEFRAME || '15m' }}
+      HISTORY_BARS: ${{ vars.SMC_HISTORY_BARS || '1500' }}
+      USE_AUTO_TF: ${{ vars.SMC_USE_AUTO_TF || 'true' }}
+      HTF: ${{ vars.SMC_HTF || '4h' }}
+      DAILY_TF: 1d
+      FOUR_HOUR_TF: 4h
+      REQUIRE_MICRO_BOS: ${{ vars.SMC_REQUIRE_MICRO_BOS || 'true' }}
+      USE_KILLZONES: ${{ vars.SMC_USE_KILLZONES || 'true' }}
+      FILTER_STRUCTURE_BY_KILLZONE: ${{ vars.SMC_FILTER_STRUCTURE_KILLZONE || 'true' }}
+      ACCOUNT_EQUITY: ${{ vars.SMC_ACCOUNT_EQUITY || '10000' }}
+      RISK_PCT: ${{ vars.SMC_RISK_PCT || '1.0' }}
+      ALERT_FRESHNESS_MINUTES: ${{ vars.SMC_ALERT_FRESHNESS_MINUTES || '14' }}
+      ALERT_EVENTS: ${{ vars.SMC_ALERT_EVENTS || 'LIMIT_BUY_PLACED,LIMIT_SELL_PLACED,STRUCTURE_BREAK,LIQUIDITY_SWEEP,FVG,CHANNEL_BREAK' }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
     steps:
-      - name: Clonar Repositorio
+      - name: Descargar repositorio
         uses: actions/checkout@v4
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+          cache: pip
 
-      - name: Instalar Dependencias
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Instalar Librerías
+      - name: Instalar dependencias verificadas
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          python -m pip install --requirement requirements.txt
+          python -m pip check
 
-      - name: Ejecutar Bot de Trading
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python bot.py
-          
+      - name: Ejecutar SMC OMEGA
+        run: python bot.py
