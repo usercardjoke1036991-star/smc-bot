@@ -3,6 +3,6 @@ Flask==3.1.1
 gunicorn==23.0.0
 numpy==1.26.4
 pandas==2.2.3
-pandas-ta==0.3.14b
+git+https://github.com/twopirllc/pandas-ta.git@development
 python-dotenv==1.1.0
 requests==2.32.4
