@@ -23,9 +23,6 @@ jobs:
           pip install -r requirements.txt
 
       - name: Ejecutar Bot de Trading
-        env:
-          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
-          BINANCE_SECRET: ${{ secrets.BINANCE_SECRET }}
         run: |
           python bot.py
           
