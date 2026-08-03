@@ -50,19 +50,41 @@ def ejecutar_estrategia():
   df['ema_lenta'] = df['close'].ewm(span=21, adjust=False).mean()
 
   ultima_vela = df.iloc[-2]
+  precio_actual = ultima_vela['close']
+
+  # --- SISTEMA PROFESIONAL DE GESTIÓN DE RIESGO (TP / SL) ---
+  if ultima_vela['ema_rapida'] > ultima_vela['ema_lenta']:
+    tipo_operacion = '🟢 COMPRA (LONG)'
+    # Stop Loss basado en el mínimo estructural de las últimas 10 velas
+    stop_loss = df['low'].iloc[-10:].min()
+    riesgo = precio_actual - stop_loss
+    # Take Profit con relación de beneficio 1:2
+    take_profit = precio_actual + (riesgo * 2)
+  else:
+    tipo_operacion = '🔴 VENTA (SHORT)'
+    # Stop Loss basado en el máximo estructural de las últimas 10 velas
+    stop_loss = df['high'].iloc[-10:].max()
+    riesgo = stop_loss - precio_actual
+    # Take Profit con relación de beneficio 1:2
+    take_profit = precio_actual - (riesgo * 2)
+
   print(
-      f"[{ultima_vela['timestamp']}] Análisis ejecutado con éxito en la nube"
-      f" (MEXC). Cierre actual: {ultima_vela['close']}"
+      f"[{ultima_vela['timestamp']}] Análisis ejecutado. Operación:"
+      f" {tipo_operacion} | Cierre actual: {precio_actual}"
   )
 
-  # Construir el mensaje para Telegram
+  # Construir el mensaje profesional para Telegram
   mensaje = (
-      f"🚨 *ACTUALIZACIÓN BOT SMC / EMA* 🚨\n\n🔹 *Activo:* {simbolo}\n🔹"
-      f" *Temporalidad:* {timeframe}\n🔹 *Cierre Actual:*"
-      f" `${ultima_vela['close']:,.2f}`\n🔹 *EMA 9:*"
-      f" `${ultima_vela['ema_rapida']:,.2f}`\n🔹 *EMA 21:*"
-      f" `${ultima_vela['ema_lenta']:,.2f}`\n\n🕒 *Timestamp:*"
-      f" `{ultima_vela['timestamp']}`"
+      f"🚨 *SEÑAL PROFESIONAL SMC / EMA* 🚨\n\n"
+      f"🔹 *Activo:* {simbolo}\n"
+      f"🔹 *Temporalidad:* {timeframe}\n"
+      f"📊 *Dirección:* {tipo_operacion}\n\n"
+      f"📍 *Precio de Entrada:* `${precio_actual:,.2f}`\n"
+      f"🛑 *Stop Loss (SL):* `${stop_loss:,.2f}`\n"
+      f"🎯 *Take Profit (TP 1:2):* `${take_profit:,.2f}`\n\n"
+      f"📈 *EMA 9:* `${ultima_vela['ema_rapida']:,.2f}`\n"
+      f"📉 *EMA 21:* `${ultima_vela['ema_lenta']:,.2f}`\n\n"
+      f"🕒 *Timestamp:* `{ultima_vela['timestamp']}`"
   )
 
   # Enviar la alerta
