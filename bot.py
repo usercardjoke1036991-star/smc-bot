@@ -1,5 +1,4 @@
 import os
-import time
 import ccxt
 import pandas as pd
 import requests
@@ -71,16 +70,5 @@ def ejecutar_estrategia():
 
 
 if __name__ == '__main__':
-  print('🤖 Bot SMC iniciado en modo continuo (Bucle automático)...')
-  while True:
-    try:
-      ejecutar_estrategia()
-    except Exception as e:
-      print(f'❌ Error en el ciclo del bot: {e}')
-
-    print(
-        '⏳ Esperando 1 hora para el siguiente análisis... (Puedes dejar la'
-        ' pestaña abierta)'
-    )
-    time.sleep(3600)  # Pausa de 3600 segundos (1 hora)
-      
+  ejecutar_estrategia()
+    
