@@ -32,6 +32,9 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 LOG = logging.getLogger("smc-omega")
+OPERATIONAL_EVENTS = frozenset(
+    {"LIMIT_BUY_PLACED", "LIMIT_SELL_PLACED", "DANGER_ZONE_EXIT"}
+)
 
 
 class ConfigurationError(ValueError):
@@ -201,6 +204,8 @@ class Config:
     channel_mult: float = 2.0
     liquidity_lookback_input: int = 100
     liquidity_buckets: int = 30
+    danger_zone_fraction: float = 0.25
+    setup_expiry_bars: int = 8
     freshness_minutes: int = 20
     telegram_token: str = ""
     telegram_chat_id: str = ""
@@ -208,10 +213,7 @@ class Config:
     alert_events: tuple[str, ...] = (
         "LIMIT_BUY_PLACED",
         "LIMIT_SELL_PLACED",
-        "STRUCTURE_BREAK",
-        "LIQUIDITY_SWEEP",
-        "FVG",
-        "CHANNEL_BREAK",
+        "DANGER_ZONE_EXIT",
     )
 
     @classmethod
@@ -225,8 +227,7 @@ class Config:
             item.strip().upper()
             for item in os.getenv(
                 "ALERT_EVENTS",
-                "LIMIT_BUY_PLACED,LIMIT_SELL_PLACED,STRUCTURE_BREAK,"
-                "LIQUIDITY_SWEEP,FVG,CHANNEL_BREAK",
+                "LIMIT_BUY_PLACED,LIMIT_SELL_PLACED,DANGER_ZONE_EXIT",
             ).split(",")
             if item.strip()
         )
@@ -244,6 +245,8 @@ class Config:
             filter_structure_by_killzone=env_bool("FILTER_STRUCTURE_BY_KILLZONE", True),
             account_equity=env_float("ACCOUNT_EQUITY", 10_000.0, 1.0),
             risk_pct=env_float("RISK_PCT", 1.0, 0.01),
+            danger_zone_fraction=env_float("DANGER_ZONE_FRACTION", 0.25, 0.01),
+            setup_expiry_bars=env_int("SETUP_EXPIRY_BARS", 8, 1),
             freshness_minutes=env_int("ALERT_FRESHNESS_MINUTES", 20, 1),
             telegram_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
@@ -267,6 +270,8 @@ class Config:
             )
         if cfg.fvg_mitigation not in {"Touch", "Midpoint", "Full Fill"}:
             raise ConfigurationError("Mitigación FVG inválida")
+        if cfg.danger_zone_fraction > 1:
+            raise ConfigurationError("DANGER_ZONE_FRACTION debe estar entre 0.01 y 1")
         return cfg
 
 
@@ -288,6 +293,17 @@ class OrderBlock:
     score: int
     identifier: int
     mitigated: bool = False
+
+
+@dataclass
+class ActiveSetup:
+    bull: bool
+    entry: float
+    stop: float
+    target: float
+    structure_level: float
+    created: int
+    filled: bool = False
 
 
 @dataclass
@@ -323,6 +339,7 @@ class EngineState:
     ob_serial: int = 0
     last_trade_bar: int = -1
     trades_by_day: dict[str, int] = field(default_factory=dict)
+    active_setups: list[ActiveSetup] = field(default_factory=list)
 
 
 def fetch_ohlcv(
@@ -649,6 +666,7 @@ class SMCStrategy:
         if pd.isna(row.atr):
             return
         s, cfg = self.state, self.cfg
+        self.monitor_active_setups(i)
         _, _, high_liquidity = session_flags(self.df.index[i], cfg)
         structure_session = not cfg.filter_structure_by_killzone or high_liquidity
 
@@ -718,11 +736,9 @@ class SMCStrategy:
         if bull_fvg:
             gap = FVG(True, float(row.low), float(two_back.high), i)
             s.fvgs.append(gap)
-            self.emit(i, "FVG", "BULL", row.close, top=gap.top, bottom=gap.bottom)
         if bear_fvg:
             gap = FVG(False, float(two_back.low), float(row.high), i)
             s.fvgs.append(gap)
-            self.emit(i, "FVG", "BEAR", row.close, top=gap.top, bottom=gap.bottom)
         s.fvgs = s.fvgs[-cfg.max_fvgs:]
 
         volume_ok = not cfg.use_volume or row.volume > row.avg_volume
@@ -812,6 +828,69 @@ class SMCStrategy:
             self.emit(i, "CHANNEL_BREAK", "DOWN", row.close, level=row.channel_lower)
 
         self.evaluate_signals(i, mitigated_bull, mitigated_bear, high_liquidity)
+
+    def monitor_active_setups(self, i: int) -> None:
+        """Emite una única salida urgente para setups llenados y en peligro."""
+        row = self.df.iloc[i]
+        survivors: list[ActiveSetup] = []
+        for setup in self.state.active_setups:
+            if i <= setup.created:
+                survivors.append(setup)
+                continue
+            if not setup.filled:
+                setup.filled = (
+                    row.low <= setup.entry if setup.bull else row.high >= setup.entry
+                )
+                if not setup.filled:
+                    if i - setup.created < self.cfg.setup_expiry_bars:
+                        survivors.append(setup)
+                    continue
+
+            risk = abs(setup.entry - setup.stop)
+            stop_touched = row.low <= setup.stop if setup.bull else row.high >= setup.stop
+            structure_invalid = (
+                row.close < setup.structure_level
+                if setup.bull
+                else row.close > setup.structure_level
+            )
+            danger_boundary = (
+                setup.stop + risk * self.cfg.danger_zone_fraction
+                if setup.bull
+                else setup.stop - risk * self.cfg.danger_zone_fraction
+            )
+            in_danger = (
+                row.close <= danger_boundary
+                if setup.bull
+                else row.close >= danger_boundary
+            )
+            target_reached = (
+                row.high >= setup.target if setup.bull else row.low <= setup.target
+            )
+
+            reason = ""
+            if stop_touched:
+                reason = "STOP LOSS ALCANZADO"
+            elif structure_invalid:
+                reason = "ESTRUCTURA DEL SETUP INVALIDADA"
+            elif in_danger:
+                reason = "PRECIO EN ZONA DE PELIGRO JUNTO AL STOP"
+
+            if reason:
+                self.emit(
+                    i,
+                    "DANGER_ZONE_EXIT",
+                    "LONG" if setup.bull else "SHORT",
+                    row.close,
+                    timeframe=self.cfg.timeframe,
+                    entry=setup.entry,
+                    stop_loss=setup.stop,
+                    take_profit=setup.target,
+                    current_price=float(row.close),
+                    reason=reason,
+                )
+            elif not target_reached:
+                survivors.append(setup)
+        self.state.active_setups = survivors
 
     def find_opposite(self, i: int, bull: bool) -> int:
         for offset in range(1, self.cfg.ob_search_depth + 1):
@@ -956,10 +1035,21 @@ class SMCStrategy:
         side = "LONG" if bull else "SHORT"
         name = "LIMIT_BUY_PLACED" if bull else "LIMIT_SELL_PLACED"
         self.emit(
-            i, name, side, row.close, entry=entry, stop_loss=stop,
+            i, name, side, row.close, timeframe=cfg.timeframe,
+            entry=entry, stop_loss=stop,
             take_profit=target, quantity=quantity, ob_score=ob.score,
             atr=float(row.atr), atr_ratio=float(atr_ratio),
             effective_risk_pct=cfg.risk_pct * risk_scale,
+        )
+        s.active_setups.append(
+            ActiveSetup(
+                bull=bull,
+                entry=float(entry),
+                stop=float(stop),
+                target=float(target),
+                structure_level=float(ob.bottom if bull else ob.top),
+                created=i,
+            )
         )
         day_key = self.df.index[i].strftime("%Y-%m-%d")
         s.trades_by_day[day_key] = s.trades_by_day.get(day_key, 0) + 1
@@ -1012,40 +1102,44 @@ def format_number(value: Any, digits: int = 6) -> str:
 
 
 def telegram_message(event: Event) -> str:
-    icons = {
-        "LIMIT_BUY_PLACED": "🟢",
-        "LIMIT_SELL_PLACED": "🔴",
-        "STRUCTURE_BREAK": "🏗️",
-        "LIQUIDITY_SWEEP": "💧",
-        "FVG": "⚡",
-        "CHANNEL_BREAK": "📈",
-    }
-    lines = [
-        f"{icons.get(event.name, '🔔')} <b>SMC OMEGA · {html.escape(event.name)}</b>",
-        f"<b>Activo:</b> <code>{html.escape(event.symbol)}</code>",
-        f"<b>Lado:</b> {html.escape(event.side)}",
-        f"<b>Cierre:</b> <code>{format_number(event.price, 8)}</code>",
-        f"<b>Vela UTC:</b> {event.timestamp.strftime('%Y-%m-%d %H:%M')}",
-    ]
-    labels = {
-        "entry": "Entrada límite",
-        "stop_loss": "Stop loss",
-        "take_profit": "Take profit",
-        "quantity": "Cantidad teórica",
-        "ob_score": "Score OB",
-        "effective_risk_pct": "Riesgo efectivo %",
-        "kind": "Estructura",
-        "level": "Nivel",
-        "top": "Techo",
-        "bottom": "Suelo",
-    }
-    for key, label in labels.items():
-        if key in event.details:
-            value = event.details[key]
-            shown = format_number(value, 8) if isinstance(value, (int, float)) else str(value)
-            lines.append(f"<b>{label}:</b> <code>{html.escape(shown)}</code>")
-    lines.append(f"<b>ID:</b> <code>{event.event_id}</code>")
-    return "\n".join(lines)
+    timeframe = html.escape(str(event.details.get("timeframe", "—")))
+    symbol = html.escape(event.symbol)
+    entry = format_number(event.details.get("entry"), 8)
+    stop = format_number(event.details.get("stop_loss"), 8)
+    target = format_number(event.details.get("take_profit"), 8)
+
+    if event.name in {"LIMIT_BUY_PLACED", "LIMIT_SELL_PLACED"}:
+        direction = "🟢 BUY (LONG)" if event.name == "LIMIT_BUY_PLACED" else "🔴 SELL (SHORT)"
+        return "\n".join(
+            (
+                f"<b>{direction}</b>",
+                f"📊 <b>Activo:</b> <code>{symbol}</code>",
+                f"⏱ <b>Temporalidad:</b> <code>{timeframe}</code>",
+                f"🎯 <b>Entrada:</b> <code>{entry}</code>",
+                f"🛑 <b>Stop Loss (SL):</b> <code>{stop}</code>",
+                f"✅ <b>Take Profit (TP):</b> <code>{target}</code>",
+            )
+        )
+
+    if event.name == "DANGER_ZONE_EXIT":
+        direction = "LONG" if event.side == "LONG" else "SHORT"
+        reason = html.escape(str(event.details.get("reason", "RIESGO ELEVADO")))
+        current = format_number(event.details.get("current_price", event.price), 8)
+        return "\n".join(
+            (
+                "🚨 <b>SALIDA DE EMERGENCIA</b>",
+                f"📊 <b>Activo:</b> <code>{symbol}</code> · <code>{timeframe}</code>",
+                f"⚠️ <b>Motivo:</b> {reason}",
+                f"↔️ <b>Posición:</b> {direction}",
+                f"💵 <b>Precio actual:</b> <code>{current}</code>",
+                f"🎯 <b>Entrada:</b> <code>{entry}</code>",
+                f"🛑 <b>Stop Loss:</b> <code>{stop}</code>",
+                f"✅ <b>Take Profit:</b> <code>{target}</code>",
+                "❗ <b>Acción sugerida: cerrar o reducir exposición inmediatamente.</b>",
+            )
+        )
+
+    raise ValueError(f"Evento Telegram no operacional: {event.name}")
 
 
 def send_telegram(cfg: Config, event: Event) -> None:
@@ -1104,7 +1198,9 @@ def main() -> int:
             events = SMCStrategy(cfg, symbol, frame, micro, tick).run()
             eligible = [
                 event for event in events
-                if event.name in cfg.alert_events and is_fresh(event, cfg)
+                if event.name in OPERATIONAL_EVENTS
+                and event.name in cfg.alert_events
+                and is_fresh(event, cfg)
             ]
             for event in eligible:
                 event.details.setdefault("profile_poc", poc)
