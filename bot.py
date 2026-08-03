@@ -252,9 +252,18 @@ class Config:
         )
         if not cfg.symbols:
             raise ConfigurationError("SYMBOLS no puede estar vacío")
-        if bool(cfg.telegram_token) != bool(cfg.telegram_chat_id):
+        telegram_missing = [
+            name
+            for name, value in (
+                ("TELEGRAM_BOT_TOKEN", cfg.telegram_token),
+                ("TELEGRAM_CHAT_ID", cfg.telegram_chat_id),
+            )
+            if not value
+        ]
+        if len(telegram_missing) == 1:
             raise ConfigurationError(
-                "TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID deben definirse juntos"
+                f"Falta el secreto de GitHub {telegram_missing[0]}; "
+                "Telegram necesita TOKEN y CHAT_ID"
             )
         if cfg.fvg_mitigation not in {"Touch", "Midpoint", "Full Fill"}:
             raise ConfigurationError("Mitigación FVG inválida")
