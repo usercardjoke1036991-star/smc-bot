@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 12
     env:
       PYTHONUNBUFFERED: "1"
-      EXCHANGE_ID: bybit
+      EXCHANGE_ID: kraken
       SYMBOLS: ${{ vars.SMC_SYMBOLS || 'BTC/USDT' }}
       TIMEFRAME: ${{ vars.SMC_TIMEFRAME || '15m' }}
       HISTORY_BARS: ${{ vars.SMC_HISTORY_BARS || '1500' }}
